@@ -1,6 +1,0 @@
-home.maxroulstone.com {
-    tls {
-        dns ionos {env.IONOS_API_KEY} {env.IONOS_API_SECRET}
-    }
-    reverse_proxy homeassistant:8123
-}
