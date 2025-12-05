@@ -1,0 +1,31 @@
+services:
+  airconnect:
+    image: 1activegeek/airconnect
+    container_name: airconnect
+    network_mode: host
+    environment:
+      - AIRCAST_VAR=-x /config/config.xml
+      - AIRUPNP_VAR=kill
+    volumes:
+      - /home/root/data/airconnect:/config
+    restart: unless-stopped
+
+  homeassistant:
+    image: lscr.io/linuxserver/homeassistant:latest
+    container_name: homeassistant
+    network_mode: host
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Etc/UTC
+    volumes:
+      - /ha/config:/config
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    command: tunnel run
+
