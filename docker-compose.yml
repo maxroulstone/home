@@ -28,4 +28,4 @@ services:
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
     command: tunnel run
-
+    restart: unless-stopped
