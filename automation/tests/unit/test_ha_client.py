@@ -13,7 +13,7 @@ from automation.ha.client import (
     HAClientError,
     ProtocolError,
 )
-from automation.ha.models import EntityState
+from automation.ha.models import EntityState, ServiceCall
 
 
 @pytest.fixture
@@ -134,6 +134,56 @@ def test_failed_entry_closes_connection(connection, failure, expected):
 
     asyncio.run(scenario())
     socket.close.assert_awaited_once()
+
+
+def test_service_call_sends_target_and_data(connection):
+    client, socket = connection
+    socket.recv.side_effect = [
+        json.dumps({"type": "auth_required"}),
+        json.dumps({"type": "auth_ok"}),
+        json.dumps(
+            {"id": 1, "type": "result", "success": True, "result": {"response": None}}
+        ),
+    ]
+
+    async def scenario():
+        async with client:
+            assert (
+                await client.call_service(
+                    ServiceCall(
+                        "light", "turn_on", ("light.lounge",), {"brightness_pct": 70}
+                    )
+                )
+                is None
+            )
+
+    asyncio.run(scenario())
+    assert json.loads(socket.send.await_args.args[0]) == {
+        "id": 1,
+        "type": "call_service",
+        "domain": "light",
+        "service": "turn_on",
+        "target": {"entity_id": ["light.lounge"]},
+        "service_data": {"brightness_pct": 70},
+    }
+
+
+def test_rejected_service_call_raises(connection):
+    client, socket = connection
+    socket.recv.side_effect = [
+        json.dumps({"type": "auth_required"}),
+        json.dumps({"type": "auth_ok"}),
+        json.dumps({"id": 1, "type": "result", "success": False}),
+    ]
+
+    async def scenario():
+        async with client:
+            with pytest.raises(HAClientError, match="HA rejected request"):
+                await client.call_service(
+                    ServiceCall("light", "turn_off", ("light.lounge",))
+                )
+
+    asyncio.run(scenario())
 
 
 def test_caller_error_still_closes_connection(connection):

@@ -2,7 +2,10 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+
+type JSONValue = (
+    str | int | float | bool | None | list[JSONValue] | dict[str, JSONValue]
+)
 
 
 @dataclass(frozen=True)
@@ -16,7 +19,7 @@ class EntityState:
 
     entity_id: str
     state: str
-    attributes: dict[str, Any]
+    attributes: dict[str, JSONValue]
     last_changed: datetime
     last_updated: datetime
 
@@ -28,4 +31,4 @@ class ServiceCall:
     domain: str
     service: str
     entity_ids: tuple[str, ...]
-    data: dict[str, Any] = field(default_factory=dict)
+    data: dict[str, JSONValue] = field(default_factory=dict)

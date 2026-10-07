@@ -1,15 +1,15 @@
-"""Read reported states through Home Assistant's WebSocket API."""
+"""Read reported states and request actions through HA's WebSocket API."""
 
 import asyncio
 import json
 from datetime import datetime
 from types import TracebackType
-from typing import Any, Self
+from typing import Self
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
-from .models import EntityState
+from .models import EntityState, JSONValue, ServiceCall
 
 
 class HAClientError(Exception):
@@ -98,7 +98,7 @@ class HAClient:
         if auth.get("type") != "auth_ok":
             raise ProtocolError("Expected HA authentication confirmation")
 
-    async def _request(self, command: str) -> Any:
+    async def _request(self, command: str, **parameters: JSONValue) -> JSONValue:
         """Send one command and receive its matching result."""
         async with self._request_lock:
             socket = self._socket
@@ -108,7 +108,9 @@ class HAClient:
             self._next_id += 1
             try:
                 async with asyncio.timeout(self._timeout):
-                    await socket.send(json.dumps({"id": request_id, "type": command}))
+                    await socket.send(
+                        json.dumps({**parameters, "id": request_id, "type": command})
+                    )
                     response = await _receive(socket)
                     if (
                         response.get("type") != "result"
@@ -138,10 +140,20 @@ class HAClient:
             raise ProtocolError("Invalid get_states result")
         return [_parse_state(value) for value in result]
 
+    async def call_service(self, call: ServiceCall) -> None:
+        """Execute a service call; device state must be confirmed separately."""
+        await self._request(
+            "call_service",
+            domain=call.domain,
+            service=call.service,
+            target={"entity_id": list(call.entity_ids)},
+            service_data=call.data,
+        )
 
-async def _receive(socket: ClientConnection) -> dict[str, Any]:
+
+async def _receive(socket: ClientConnection) -> dict[str, JSONValue]:
     try:
-        message = json.loads(await socket.recv())
+        message: JSONValue = json.loads(await socket.recv())
     except ValueError, UnicodeError:
         raise ProtocolError("Invalid JSON from HA") from None
     if not isinstance(message, dict):
@@ -149,7 +161,7 @@ async def _receive(socket: ClientConnection) -> dict[str, Any]:
     return message
 
 
-def _parse_state(value: Any) -> EntityState:
+def _parse_state(value: JSONValue) -> EntityState:
     try:
         if not isinstance(value, dict):
             raise ValueError
@@ -159,8 +171,11 @@ def _parse_state(value: Any) -> EntityState:
             raise ValueError
         if not isinstance(attributes, dict):
             raise ValueError
-        changed = datetime.fromisoformat(value["last_changed"])
-        updated = datetime.fromisoformat(value["last_updated"])
+        last_changed, last_updated = value["last_changed"], value["last_updated"]
+        if not isinstance(last_changed, str) or not isinstance(last_updated, str):
+            raise ValueError
+        changed = datetime.fromisoformat(last_changed)
+        updated = datetime.fromisoformat(last_updated)
         if changed.tzinfo is None or updated.tzinfo is None:
             raise ValueError
         return EntityState(entity_id, state, attributes, changed, updated)
