@@ -28,7 +28,7 @@ class HAClient:
     """An authenticated HA connection managed with ``async with``.
 
     Entering connects and authenticates; exiting closes the connection. Commands
-    share that connection and run one at a time. Connection/authentication and
+    share that connection; one background reader routes responses by request ID. Connection/authentication and
     each command have separate timeouts. Tokens and server response bodies are
     never included in error messages.
     """
@@ -43,7 +43,9 @@ class HAClient:
         self._timeout = timeout
         self._socket: ClientConnection | None = None
         self._next_id = 1
-        self._request_lock = asyncio.Lock()
+        self._reader: asyncio.Task[None] | None = None
+        self._pending: dict[int, asyncio.Future[dict[str, JSONValue]]] = {}
+        self._events: asyncio.Queue[dict[str, JSONValue]] = asyncio.Queue(maxsize=256)
 
     async def __aenter__(self) -> Self:
         """Open the connection and authenticate before exposing the client."""
@@ -59,6 +61,8 @@ class HAClient:
                 )
                 await self._authenticate(self._socket)
             self._next_id = 1
+            self._events = asyncio.Queue(maxsize=256)
+            self._reader = asyncio.create_task(self._read_messages(self._socket))
         except BaseException as error:
             # Failed entry doesn't call __aexit__; cancellation needs cleanup too.
             await self._close()
@@ -80,12 +84,56 @@ class HAClient:
 
     async def _close(self) -> None:
         socket, self._socket = self._socket, None
+        reader, self._reader = self._reader, None
+        self._fail_pending(HAClientError("HA connection closed"))
+        if reader is not None and reader is not asyncio.current_task():
+            reader.cancel()
+            await asyncio.gather(reader, return_exceptions=True)
         if socket is not None:
             try:
                 await socket.close()
             except OSError, WebSocketException:
                 # Cleanup must not replace the original error with server details.
                 pass
+
+    def _fail_pending(self, error: HAClientError) -> None:
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(error)
+        self._pending.clear()
+
+    async def _read_messages(self, socket: ClientConnection) -> None:
+        """Own receiving after authentication; route results and retain events."""
+        try:
+            while True:
+                message = await _receive(socket)
+                if message.get("type") == "event":
+                    # Subscription support will consume this bounded queue next.
+                    try:
+                        self._events.put_nowait(message)
+                    except asyncio.QueueFull:
+                        raise ProtocolError("HA event buffer is full") from None
+                    continue
+                request_id = message.get("id")
+                if (
+                    message.get("type") != "result"
+                    or type(request_id) is not int  # Reject bools too: True == 1.
+                    # Check IDs we've issued, rather than just those in _pending:
+                    # requests may time out or be cancelled before its response arrives.
+                    # That late response is valid but should be ignored.
+                    or not 0 < request_id < self._next_id
+                ):
+                    raise ProtocolError("Unexpected HA response")
+                future = self._pending.get(request_id)
+                if future is not None and not future.done():
+                    future.set_result(message)
+                # Late results for timed-out/cancelled requests are discarded.
+        except HAClientError as error:
+            self._fail_pending(error)
+        except OSError, WebSocketException:
+            self._fail_pending(HAClientError("HA connection failed"))
+        finally:
+            await self._close()
 
     async def _authenticate(self, socket: ClientConnection) -> None:
         hello = await _receive(socket)
@@ -99,39 +147,49 @@ class HAClient:
             raise ProtocolError("Expected HA authentication confirmation")
 
     async def _request(self, command: str, **parameters: JSONValue) -> JSONValue:
-        """Send one command and receive its matching result."""
-        async with self._request_lock:
-            socket = self._socket
-            if socket is None:
-                raise HAClientError("Use HAClient inside an async with block")
-            request_id = self._next_id
-            self._next_id += 1
-            try:
-                async with asyncio.timeout(self._timeout):
-                    await socket.send(
-                        json.dumps({**parameters, "id": request_id, "type": command})
-                    )
-                    response = await _receive(socket)
-                    if (
-                        response.get("type") != "result"
-                        or response.get("id") != request_id
-                    ):
-                        raise ProtocolError("Expected result for HA request")
-                    if response.get("success") is False:
-                        raise HAClientError("HA rejected request")
-                    if response.get("success") is not True:
-                        raise ProtocolError("Invalid HA result")
-                    return response.get("result")
-            except TimeoutError:
+        """Send a command and wait for the reader to deliver its matching result."""
+        socket = self._socket
+        if socket is None:
+            raise HAClientError("Use HAClient inside an async with block")
+        request_id = self._next_id
+        self._next_id += 1
+        future: asyncio.Future[dict[str, JSONValue]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending[request_id] = future
+        sent = False
+        try:
+            async with asyncio.timeout(self._timeout):
+                await socket.send(
+                    json.dumps({**parameters, "id": request_id, "type": command})
+                )
+                sent = True
+                response = await future
+            if response.get("success") is False:
+                raise HAClientError("HA rejected request")
+            if response.get("success") is not True:
+                raise ProtocolError("Invalid HA result")
+            return response.get("result")
+        except TimeoutError:
+            if not sent:
                 await self._close()
-                raise HAClientError("HA request timed out") from None
-            except OSError, WebSocketException:
+            raise HAClientError("HA request timed out") from None
+        except OSError, WebSocketException:
+            await self._close()
+            raise HAClientError("HA connection failed") from None
+        except asyncio.CancelledError:
+            # Interrupting send may leave the transport unusable. Cancelling a
+            # response wait only retires that request; others can continue.
+            if not sent:
                 await self._close()
-                raise HAClientError("HA connection failed") from None
-            except ProtocolError, asyncio.CancelledError:
-                # A late response could corrupt the next command's exchange.
-                await self._close()
-                raise
+            raise
+        finally:
+            self._pending.pop(request_id, None)
+            if not future.done():
+                future.cancel()
+            elif not future.cancelled():
+                # Consume a disconnect error even if send failed before awaiting.
+                future.exception()
 
     async def get_states(self) -> list[EntityState]:
         """Read a snapshot using the already authenticated connection."""
