@@ -267,3 +267,124 @@ def test_cancelled_read_does_not_poison_the_next_response(connection):
 
     asyncio.run(scenario())
     socket.close.assert_awaited_once()
+
+
+def state_change_message(
+    old: str | None = "off", new: str | None = "on"
+) -> dict[str, JSONValue]:
+    def state(value: str | None) -> JSONValue:
+        if value is None:
+            return None
+        return {
+            "entity_id": "light.lounge",
+            "state": value,
+            "attributes": {},
+            "last_changed": "2026-10-25T12:00:00Z",
+            "last_updated": "2026-10-25T12:00:00Z",
+        }
+
+    return {
+        "id": 1,
+        "type": "event",
+        "event": {
+            "event_type": "state_changed",
+            "time_fired": "2026-10-25T12:00:00Z",
+            "data": {
+                "entity_id": "light.lounge",
+                "old_state": state(old),
+                "new_state": state(new),
+            },
+        },
+    }
+
+
+@pytest.mark.parametrize("old, new", [("off", "on"), (None, "on"), ("on", None)])
+def test_subscribes_and_reads_typed_state_changes(connection, old, new):
+    client, socket = connection
+    socket.responses = {1: result(1), 2: result(2, [])}
+    original_send = socket.send.side_effect
+
+    async def send(payload):
+        if json.loads(payload)["type"] == "subscribe_events":
+            # Events arriving before subscribe returns must be retained.
+            socket.incoming.put_nowait(state_change_message(old, new))
+        await original_send(payload)
+
+    socket.send.side_effect = send
+
+    async def scenario():
+        async with asyncio.timeout(1), client:
+            await client.subscribe_state_changes()
+            await client.subscribe_state_changes()  # No duplicate subscription.
+            assert await client.get_states() == []  # Commands still work.
+            change = await client.next_state_change()
+            assert change.entity_id == "light.lounge"
+            assert (change.old_state.state if change.old_state else None) == old
+            assert (change.new_state.state if change.new_state else None) == new
+            assert change.time_fired == datetime(2026, 10, 25, 12, tzinfo=UTC)
+
+    asyncio.run(scenario())
+    assert json.loads(socket.send.await_args_list[1].args[0]) == {
+        "id": 1,
+        "type": "subscribe_events",
+        "event_type": "state_changed",
+    }
+    assert socket.send.await_count == 3  # Auth, subscribe, get_states.
+
+
+def test_rejected_subscription_raises(connection):
+    client, socket = connection
+    socket.responses[1] = {"id": 1, "type": "result", "success": False}
+
+    async def scenario():
+        async with client:
+            with pytest.raises(HAClientError, match="HA rejected request"):
+                await client.subscribe_state_changes()
+
+    asyncio.run(scenario())
+    socket.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("disconnect", [False, True])
+def test_unsubscribe_or_disconnect_wakes_waiting_event_consumer(connection, disconnect):
+    client, socket = connection
+    socket.responses = {1: result(1), 2: result(2, True)}
+
+    async def scenario():
+        waiting = asyncio.Event()
+
+        async def consume():
+            waiting.set()
+            return await client.next_state_change()
+
+        async with asyncio.timeout(1), client:
+            await client.subscribe_state_changes()
+            consumer = asyncio.create_task(consume())
+            await waiting.wait()
+            if disconnect:
+                socket.incoming.put_nowait(OSError("private server details"))
+            else:
+                await client.unsubscribe_state_changes()
+                assert json.loads(socket.send.await_args.args[0]) == {
+                    "id": 2,
+                    "type": "unsubscribe_events",
+                    "subscription": 1,
+                }
+            with pytest.raises(HAClientError, match="stream closed"):
+                await consumer
+
+    asyncio.run(scenario())
+
+
+def test_malformed_state_change_is_rejected(connection):
+    client, socket = connection
+    socket.responses[1] = result(1)
+
+    async def scenario():
+        async with asyncio.timeout(1), client:
+            await client.subscribe_state_changes()
+            socket.incoming.put_nowait({"id": 1, "type": "event", "event": {}})
+            with pytest.raises(ProtocolError, match="Invalid state-change"):
+                await client.next_state_change()
+
+    asyncio.run(scenario())

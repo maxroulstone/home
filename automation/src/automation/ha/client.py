@@ -9,7 +9,7 @@ from typing import Self
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
-from .models import EntityState, JSONValue, ServiceCall
+from .models import EntityState, JSONValue, ServiceCall, StateChanged
 
 
 class HAClientError(Exception):
@@ -28,9 +28,9 @@ class HAClient:
     """An authenticated HA connection managed with ``async with``.
 
     Entering connects and authenticates; exiting closes the connection. Commands
-    share that connection; one background reader routes responses by request ID. Connection/authentication and
-    each command have separate timeouts. Tokens and server response bodies are
-    never included in error messages.
+    share that connection; one background reader routes responses by request ID.
+    Connection/authentication and each command have separate timeouts. Tokens and
+    server response bodies are never included in error messages.
     """
 
     def __init__(
@@ -46,6 +46,8 @@ class HAClient:
         self._reader: asyncio.Task[None] | None = None
         self._pending: dict[int, asyncio.Future[dict[str, JSONValue]]] = {}
         self._events: asyncio.Queue[dict[str, JSONValue]] = asyncio.Queue(maxsize=256)
+        self._subscription_id: int | None = None
+        self._subscription_lock = asyncio.Lock()
 
     async def __aenter__(self) -> Self:
         """Open the connection and authenticate before exposing the client."""
@@ -85,6 +87,8 @@ class HAClient:
     async def _close(self) -> None:
         socket, self._socket = self._socket, None
         reader, self._reader = self._reader, None
+        self._subscription_id = None
+        self._events.shutdown(immediate=True)
         self._fail_pending(HAClientError("HA connection closed"))
         if reader is not None and reader is not asyncio.current_task():
             reader.cancel()
@@ -108,7 +112,6 @@ class HAClient:
             while True:
                 message = await _receive(socket)
                 if message.get("type") == "event":
-                    # Subscription support will consume this bounded queue next.
                     try:
                         self._events.put_nowait(message)
                     except asyncio.QueueFull:
@@ -146,8 +149,10 @@ class HAClient:
         if auth.get("type") != "auth_ok":
             raise ProtocolError("Expected HA authentication confirmation")
 
-    async def _request(self, command: str, **parameters: JSONValue) -> JSONValue:
-        """Send a command and wait for the reader to deliver its matching result."""
+    async def _request(
+        self, command: str, **parameters: JSONValue
+    ) -> dict[str, JSONValue]:
+        """Return the successful response, including its ID for subscriptions."""
         socket = self._socket
         if socket is None:
             raise HAClientError("Use HAClient inside an async with block")
@@ -169,7 +174,7 @@ class HAClient:
                 raise HAClientError("HA rejected request")
             if response.get("success") is not True:
                 raise ProtocolError("Invalid HA result")
-            return response.get("result")
+            return response
         except TimeoutError:
             if not sent:
                 await self._close()
@@ -193,7 +198,8 @@ class HAClient:
 
     async def get_states(self) -> list[EntityState]:
         """Read a snapshot using the already authenticated connection."""
-        result = await self._request("get_states")
+        response = await self._request("get_states")
+        result = response.get("result")
         if not isinstance(result, list):
             raise ProtocolError("Invalid get_states result")
         return [_parse_state(value) for value in result]
@@ -207,6 +213,58 @@ class HAClient:
             target={"entity_id": list(call.entity_ids)},
             service_data=call.data,
         )
+
+    async def subscribe_state_changes(self) -> None:
+        """Start one shared state-change stream; repeated calls are a no-op."""
+        async with self._subscription_lock:
+            if self._subscription_id is not None:  # subscription already exists
+                return
+            try:
+                response = await self._request(
+                    "subscribe_events", event_type="state_changed"
+                )
+            except HAClientError, asyncio.CancelledError:
+                # HA may have subscribed even if its acknowledgement was lost.
+                await self._close()
+                raise
+            subscription_id = response.get("id")
+            if type(subscription_id) is not int:
+                raise ProtocolError("Invalid HA subscription ID")
+            self._subscription_id = subscription_id
+
+    async def next_state_change(self) -> StateChanged:
+        """Wait for the next change; this stream is intended for one consumer.
+
+        Disconnect/unsubscribe raises HAClientError rather than waiting forever.
+        Subscribe again and refresh state after opening a new connection.
+        """
+        if self._subscription_id is None:
+            raise HAClientError("Subscribe to state changes before reading events")
+        queue, subscription_id = self._events, self._subscription_id
+        try:
+            while True:
+                message = await queue.get()
+                if message.get("id") == subscription_id:
+                    return _parse_state_change(message.get("event"))
+        except asyncio.QueueShutDown:
+            raise HAClientError("HA state-change stream closed") from None
+
+    async def unsubscribe_state_changes(self) -> None:
+        """Stop the stream and discard buffered events from that subscription."""
+        async with self._subscription_lock:
+            if self._subscription_id is None:
+                return
+            try:
+                await self._request(
+                    "unsubscribe_events", subscription=self._subscription_id
+                )
+            except HAClientError, asyncio.CancelledError:
+                # Close if we cannot confirm HA stopped sending events.
+                await self._close()
+                raise
+            self._subscription_id = None
+            self._events.shutdown(immediate=True)
+            self._events = asyncio.Queue(maxsize=256)
 
 
 async def _receive(socket: ClientConnection) -> dict[str, JSONValue]:
@@ -239,3 +297,26 @@ def _parse_state(value: JSONValue) -> EntityState:
         return EntityState(entity_id, state, attributes, changed, updated)
     except KeyError, ValueError, TypeError:
         raise ProtocolError("Invalid entity state from HA") from None
+
+
+def _parse_state_change(value: JSONValue) -> StateChanged:
+    try:
+        if not isinstance(value, dict) or value.get("event_type") != "state_changed":
+            raise ValueError
+        data, time_fired = value["data"], value["time_fired"]
+        if not isinstance(data, dict) or not isinstance(time_fired, str):
+            raise ValueError
+        entity_id = data["entity_id"]
+        if not isinstance(entity_id, str):
+            raise ValueError
+        old, new = data["old_state"], data["new_state"]
+        old_state = _parse_state(old) if old is not None else None
+        new_state = _parse_state(new) if new is not None else None
+        if any(s.entity_id != entity_id for s in (old_state, new_state) if s):
+            raise ValueError
+        timestamp = datetime.fromisoformat(time_fired)
+        if timestamp.tzinfo is None:
+            raise ValueError
+        return StateChanged(entity_id, old_state, new_state, timestamp)
+    except KeyError, ValueError, TypeError:
+        raise ProtocolError("Invalid state-change event from HA") from None

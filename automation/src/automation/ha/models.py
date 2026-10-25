@@ -25,6 +25,16 @@ class EntityState:
 
 
 @dataclass(frozen=True)
+class StateChanged:
+    """An HA state change; creation/removal can have a missing old/new state."""
+
+    entity_id: str
+    old_state: EntityState | None
+    new_state: EntityState | None
+    time_fired: datetime
+
+
+@dataclass(frozen=True)
 class ServiceCall:
     """A request to HA; sending it does not confirm the resulting device state."""
 
