@@ -71,11 +71,11 @@ def test_reads_states_twice_on_one_authenticated_connection(connection):
             first = await client.get_states()
             assert first == [
                 EntityState(
-                    "light.lounge",
-                    "on",
-                    {"brightness": 178},
-                    datetime(2026, 10, 6, 12, tzinfo=UTC),
-                    datetime(2026, 10, 6, 12, 1, tzinfo=UTC),
+                    entity_id="light.lounge",
+                    state="on",
+                    attributes={"brightness": 178},
+                    last_changed=datetime(2026, 10, 6, 12, tzinfo=UTC),
+                    last_updated=datetime(2026, 10, 6, 12, 1, tzinfo=UTC),
                 )
             ]
             assert await client.get_states() == first
@@ -115,7 +115,7 @@ def test_concurrent_reads_receive_their_own_out_of_order_responses(connection):
                 assert not first.done()
                 socket.incoming.put_nowait(result(1, []))
             assert first.result() == second.result() == []
-            assert client._events.get_nowait()["type"] == "event"
+            assert client._events.get_nowait().type == "event"
 
     asyncio.run(scenario())
     socket.close.assert_awaited_once()
@@ -152,7 +152,10 @@ def test_service_call_sends_target_and_data(connection):
             assert (
                 await client.call_service(
                     ServiceCall(
-                        "light", "turn_on", ("light.lounge",), {"brightness_pct": 70}
+                        domain="light",
+                        service="turn_on",
+                        entity_ids=("light.lounge",),
+                        data={"brightness_pct": 70},
                     )
                 )
                 is None
@@ -177,7 +180,9 @@ def test_rejected_service_call_raises(connection):
         async with client:
             with pytest.raises(HAClientError, match="HA rejected request"):
                 await client.call_service(
-                    ServiceCall("light", "turn_off", ("light.lounge",))
+                    ServiceCall(
+                        domain="light", service="turn_off", entity_ids=("light.lounge",)
+                    )
                 )
 
     asyncio.run(scenario())
@@ -386,5 +391,24 @@ def test_malformed_state_change_is_rejected(connection):
             socket.incoming.put_nowait({"id": 1, "type": "event", "event": {}})
             with pytest.raises(ProtocolError, match="Invalid state-change"):
                 await client.next_state_change()
+
+    asyncio.run(scenario())
+
+
+def test_validation_failure_does_not_expose_server_payload(connection):
+    client, socket = connection
+    socket.responses[1] = {
+        "type": "result",
+        "id": True,
+        "success": True,
+        "result": "private-input",
+    }
+
+    async def scenario():
+        async with client:
+            with pytest.raises(ProtocolError) as error:
+                await client.get_states()
+            assert "private-input" not in str(error.value)
+            assert error.value.__suppress_context__
 
     asyncio.run(scenario())
