@@ -22,6 +22,11 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.1",
     "ruff>=0.16.9",
     "ty>=0.0.85",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
+markers = ["integration: requires the local Home Assistant simulation"]

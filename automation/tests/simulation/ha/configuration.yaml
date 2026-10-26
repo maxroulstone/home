@@ -1,0 +1,20 @@
+homeassistant:
+  name: Automation simulation
+  time_zone: Europe/London
+  latitude: 0
+  longitude: 0
+  elevation: 0
+
+# Only the UI/API and local state history; device integrations are added explicitly.
+frontend:
+api:
+http:
+config:
+history:
+recorder:
+
+# A harmless entity for the client integration test; no physical device involved.
+input_boolean:
+  simulation_probe:
+    name: Simulation probe
+    initial: false
