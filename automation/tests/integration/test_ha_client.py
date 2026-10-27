@@ -2,10 +2,11 @@
 
 import asyncio
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 
 import pytest
 
-from automation.ha.client import HAClient
+from automation.ha.client import HAClient, HAClientError
 from automation.ha.models import ServiceCall
 
 
@@ -46,3 +47,24 @@ async def test_subscription_receives_state_change(client: HAClient, probe: str):
         assert change.new_state and change.new_state.state == "on"
     finally:
         await client.unsubscribe_state_changes()
+
+
+async def test_disconnect_wakes_event_consumer(
+    client: HAClient,
+    stopped_simulation: Callable[[], AbstractAsyncContextManager[None]],
+):
+    await client.subscribe_state_changes()
+
+    async def consume():
+        while True:
+            await client.next_state_change()
+
+    consumer = asyncio.create_task(consume())
+    try:
+        async with stopped_simulation():
+            with pytest.raises(HAClientError, match="stream closed"):
+                async with asyncio.timeout(10):
+                    await consumer
+    finally:
+        consumer.cancel()
+        await asyncio.gather(consumer, return_exceptions=True)

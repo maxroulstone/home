@@ -41,6 +41,23 @@ will have their own tests once configured.
 uv run pytest tests/integration -q
 ```
 
+Separate manager tests cover the initial connection, reconnection, refreshed
+states, events after reconnection, and rejected actions while disconnected.
+A client test checks that stopping HA wakes a waiting consumer with an error.
+They stop/start only this simulation's `homeassistant` service, using the local
+Docker Desktop `desktop-linux` context, and restart it in cleanup even if an
+assertion fails. Run these tests serially against a dedicated simulation.
+
+HA can accept API connections before its helpers finish loading. The restart
+fixture waits until the probe and its service are usable; the recovery test also
+allows the helper to appear as a creation event after the new snapshot.
+
+Run just the manager integration tests:
+
+```bash
+uv run pytest tests/integration/test_ha_connection.py -q
+```
+
 Unit tests remain the default and need no running HA:
 
 ```bash
@@ -62,5 +79,5 @@ docker compose -f tests/simulation/compose.yaml down --volumes
 
 After resetting HA, create a new local user/token and replace the old token file.
 
-Verified against HA 2026.10.4: all four integration tests and all 32 unit tests
+Verified against HA 2026.10.4: all ten integration tests and all 42 unit tests
 passed. Virtual lights and motion scenarios are the next additions.
