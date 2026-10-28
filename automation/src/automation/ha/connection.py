@@ -44,8 +44,8 @@ class HAConnectionManager:
 
     async def run(
         self,
-        on_snapshot: Callable[[list[EntityState]], Awaitable[None]],
-        on_change: Callable[[StateChanged], Awaitable[None]],
+        on_state_snapshot_received: Callable[[list[EntityState]], Awaitable[None]],
+        on_state_change_received: Callable[[StateChanged], Awaitable[None]],
     ) -> None:
         """Retry transport failures; propagate invalid auth/protocol or handler bugs.
 
@@ -73,8 +73,8 @@ class HAConnectionManager:
                         delay = self._retry_delay
                         self._client = client
                         try:
-                            await on_snapshot(states)
-                            await self._listen(client, on_change)
+                            await on_state_snapshot_received(states)
+                            await self._listen(client, on_state_change_received)
                         finally:
                             self._client = None
 
@@ -87,7 +87,7 @@ class HAConnectionManager:
     async def _listen(
         self,
         client: HAClient,
-        on_change: Callable[[StateChanged], Awaitable[None]],
+        on_state_change_received: Callable[[StateChanged], Awaitable[None]],
     ) -> None:
         while True:
             try:
@@ -98,7 +98,7 @@ class HAConnectionManager:
                 return  # End this session so run can establish a new one.
 
             # Handler failures must escape rather than being mistaken for an outage.
-            await on_change(change)
+            await on_state_change_received(change)
 
     async def call_service(self, call: ServiceCall) -> None:
         """Send once on the refreshed connection; never queue or replay actions.

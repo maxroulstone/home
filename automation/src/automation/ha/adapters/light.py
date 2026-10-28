@@ -12,9 +12,9 @@ from automation.devices.light import (
     RGBColor,
 )
 
-from .client import HAClientError
-from .connection import HAConnectionManager
-from .models import EntityState, HAModel, JSONValue, ServiceCall, StateChanged
+from ..client import HAClientError
+from ..connection import HAConnectionManager
+from ..models import EntityState, HAModel, JSONValue, ServiceCall, StateChanged
 
 
 class _LightAttributes(HAModel):

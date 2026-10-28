@@ -6,8 +6,8 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from automation.ha.messages import MESSAGE_ADAPTER, CommandResponse
 from automation.ha.models import EntityState, ServiceCall
+from automation.ha.models.messages import MESSAGE_ADAPTER, CommandResponse
 
 
 @pytest.fixture

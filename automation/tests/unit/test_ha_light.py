@@ -7,9 +7,9 @@ import pytest
 from pydantic import ValidationError
 
 from automation.devices.light import Light, LightCommandError
+from automation.ha.adapters.light import HALight
 from automation.ha.client import HAClientError
 from automation.ha.connection import HAConnectionManager
-from automation.ha.light import HALight
 from automation.ha.models import EntityState, ServiceCall
 
 

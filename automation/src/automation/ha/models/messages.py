@@ -4,7 +4,8 @@ from typing import Annotated, Literal
 
 from pydantic import Field, TypeAdapter
 
-from .models import EntityState, HAModel, HATimestamp, JSONValue
+from .base import HAModel, HATimestamp, JSONValue
+from .state import EntityState
 
 
 class AuthMessage(HAModel):

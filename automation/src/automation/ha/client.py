@@ -9,14 +9,14 @@ from pydantic import TypeAdapter, ValidationError
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import WebSocketException
 
-from .messages import (
+from .models import EntityState, JSONValue, ServiceCall, StateChanged
+from .models.messages import (
     MESSAGE_ADAPTER,
     CommandResponse,
     EventMessage,
     IncomingMessage,
     StateChangeEvent,
 )
-from .models import EntityState, JSONValue, ServiceCall, StateChanged
 
 
 STATE_ADAPTER = TypeAdapter(list[EntityState])
