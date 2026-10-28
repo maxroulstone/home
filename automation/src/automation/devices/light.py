@@ -2,7 +2,9 @@
 
 from typing import Annotated, Literal, Protocol
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from automation.models.base import State
 
 
 type BrightnessPercent = Annotated[int, Field(strict=True, ge=0, le=100)]
@@ -11,7 +13,7 @@ type RGBChannel = Annotated[int, Field(strict=True, ge=0, le=255)]
 type RGBColor = Annotated[tuple[RGBChannel, RGBChannel, RGBChannel], Field(strict=True)]
 
 
-class LightState(BaseModel):
+class LightState(State):
     """A reported observation, independent of requested actions and integrations.
 
     updated_at is the source's last update time, not when we fetched a snapshot.
@@ -20,12 +22,7 @@ class LightState(BaseModel):
     from a physical device. Both colour attributes may be reported together.
     """
 
-    model_config = ConfigDict(
-        strict=True, frozen=True, extra="forbid", hide_input_in_errors=True
-    )
-
     power: Literal["on", "off", "unknown", "unavailable"]
-    updated_at: AwareDatetime
     brightness_pct: (
         Annotated[float, Field(ge=0, le=100, allow_inf_nan=False)] | None
     ) = None
