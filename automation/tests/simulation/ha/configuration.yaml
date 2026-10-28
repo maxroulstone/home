@@ -18,3 +18,19 @@ input_boolean:
   simulation_probe:
     name: Simulation probe
     initial: false
+
+# HA handles commands and stores the virtual light's state in optimistic mode.
+# Empty action lists deliberately avoid calling any physical integration.
+template:
+  - light:
+      - name: Lounge
+        unique_id: simulation_lounge
+        optimistic: true
+        turn_on: []
+        turn_off: []
+        set_level: []
+        set_temperature: []
+        set_rgb: []
+
+lovelace:
+  mode: yaml

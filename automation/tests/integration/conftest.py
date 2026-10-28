@@ -127,10 +127,11 @@ def stopped_simulation(
                     try:
                         async with client_factory() as client:
                             states = await client.get_states()
-                            if any(
-                                state.entity_id == "input_boolean.simulation_probe"
-                                for state in states
-                            ):
+                            required = {
+                                "input_boolean.simulation_probe",
+                                "light.lounge",
+                            }
+                            if required.issubset(state.entity_id for state in states):
                                 await client.call_service(
                                     ServiceCall(
                                         domain="input_boolean",

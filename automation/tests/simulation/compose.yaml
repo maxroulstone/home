@@ -10,6 +10,7 @@ services:
     volumes:
       - ha-config:/config
       - ./ha/configuration.yaml:/config/configuration.yaml:ro
+      - ./ha/ui-lovelace.yaml:/config/ui-lovelace.yaml:ro
 
 volumes:
   ha-config:

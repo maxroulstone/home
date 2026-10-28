@@ -1,0 +1,8 @@
+title: Automation simulation
+views:
+  - title: Lounge
+    path: lounge
+    cards:
+      - type: light
+        entity: light.lounge
+        name: Simulated lounge light

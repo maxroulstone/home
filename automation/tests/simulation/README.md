@@ -34,8 +34,7 @@ simulation, not production.
 Separate tests cover connection/authentication, reading states, a service call
 changing reported state, and receiving a subscription event. The last two use
 `input_boolean.simulation_probe`, with shared fixtures resetting it before and
-after each test. This helper has no physical device attached; virtual lights
-will have their own tests once configured.
+after each test. This helper has no physical device attached.
 
 ```bash
 uv run pytest tests/integration -q
@@ -49,7 +48,7 @@ Docker Desktop `desktop-linux` context, and restart it in cleanup even if an
 assertion fails. Run these tests serially against a dedicated simulation.
 
 HA can accept API connections before its helpers finish loading. The restart
-fixture waits until the probe and its service are usable; the recovery test also
+fixture waits until the probe, virtual light, and probe service are usable; the recovery test also
 allows the helper to appear as a creation event after the new snapshot.
 
 Run just the manager integration tests:
@@ -79,5 +78,47 @@ docker compose -f tests/simulation/compose.yaml down --volumes
 
 After resetting HA, create a new local user/token and replace the old token file.
 
-Verified against HA 2026.10.4: all ten integration tests and all 42 unit tests
-passed. Virtual lights and motion scenarios are the next additions.
+## Virtual lounge light
+
+`light.lounge` is HA's built-in template light in optimistic mode. It handles real
+`light.turn_on`/`light.turn_off` service calls and publishes state, brightness,
+colour temperature, and RGB attributes. Its action lists are empty because there
+is no physical device to control. Tests never write arbitrary HA states.
+
+The dashboard at <http://localhost:18123/lovelace/lounge> has a light card for
+manual control. Simulation YAML files are mounted read-only; after editing them,
+restart this simulation's HA service:
+
+```bash
+docker compose -f tests/simulation/compose.yaml up -d
+docker compose -f tests/simulation/compose.yaml restart homeassistant
+```
+
+Separate tests call `HALight` through the real connection manager and check
+reported on/off, brightness, colour temperature, and RGB. They now read the
+backend-independent `LightState` model. Additional tests verify state-change event
+translation and the optimistic light's assumed-state flag. Shared
+setup resets the light's brightness/colour and turns it off; cleanup leaves it
+off. Run them with:
+
+```bash
+uv run pytest tests/integration/test_ha_light.py -q
+```
+
+This virtual device immediately accepts supported commands. It cannot verify
+physical colour accuracy, device-specific capability limits, radio/network
+delivery, transition timing, or delayed/unavailable physical devices. HA reports
+this optimistic light as assumed state; accepted commands are not independent
+physical-device confirmation.
+
+Reference: [HA template light documentation](https://www.home-assistant.io/integrations/template/#light).
+
+Reported observations are translated by `HALight.parse_state(entity)` for a
+snapshot and `HALight.parse_change(event)` for an event. The result is a strict,
+frozen Pydantic `LightState`: power, brightness percentage, Kelvin, RGB, source
+update timestamp, and whether the state is assumed. Unknown and unavailable are
+kept separate from off. A removed HA entity becomes unavailable.
+
+Translation does not cache state, route updates to automations, or mark commands
+as confirmed. Automation startup/event wiring will supply these observations to
+rules separately from the `Light` command interface.
