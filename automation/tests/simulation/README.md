@@ -119,6 +119,31 @@ frozen Pydantic `LightState`: power, brightness percentage, Kelvin, RGB, source
 update timestamp, and whether the state is assumed. Unknown and unavailable are
 kept separate from off. A removed HA entity becomes unavailable.
 
-Translation does not cache state, route updates to automations, or mark commands
-as confirmed. Automation startup/event wiring will supply these observations to
-rules separately from the `Light` command interface.
+The parsing methods do not cache state or mark commands as confirmed.
+`HALightRouter` now handles registration, translation and delivery automatically.
+Example startup wiring:
+
+```python
+manager = HAConnectionManager(client_factory)
+lounge_light = HALight(manager, entity_id="light.lounge")
+router = HALightRouter()
+router.register(lounge_light, on_state_received=handle_lounge_light)
+await manager.run(router.handle_state_snapshot, router.handle_state_change)
+```
+
+`handle_lounge_light` is an async function accepting `LightState | None`. It
+receives a baseline on every snapshot, including reconnection. A missing entity
+produces `None` so the recipient can clear old state without inventing a source
+timestamp. A removal event produces an unavailable `LightState` with the event's
+timestamp. Later duplicate/older events are ignored using the source update time;
+a new snapshot resets the comparison baseline. Handlers run sequentially and
+exceptions propagate. Register one handler per light before starting the manager.
+
+The application entry point is not wired yet; this example describes how startup
+will connect a light to an automation handler. No credentials are embedded here.
+Two focused tests verify that real HA snapshots and changes reach the registered
+recipient without manual parsing:
+
+```bash
+uv run pytest tests/integration/test_ha_light_router.py -q
+```

@@ -1,1 +1,1 @@
-"""Home Assistant connection handling, API models and adapters."""
+"""Home Assistant connection handling, API models, adapters and routing."""

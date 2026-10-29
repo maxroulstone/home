@@ -33,6 +33,11 @@ class HALight(Light):
         self._manager = manager
         self._entity_id = entity_id
 
+    @property
+    def entity_id(self) -> str:
+        """The HA entity this adapter controls; used only by integration routing."""
+        return self._entity_id
+
     @validate_call(config=ConfigDict(hide_input_in_errors=True))
     async def turn_on(
         self,
