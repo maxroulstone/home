@@ -28,5 +28,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+# Allow matching test filenames in different component folders.
+addopts = ["--import-mode=importlib"]
 testpaths = ["tests/unit"]
 markers = ["integration: requires the local Home Assistant simulation"]

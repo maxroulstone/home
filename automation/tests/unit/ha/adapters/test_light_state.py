@@ -8,8 +8,8 @@ from pydantic import ValidationError
 
 from automation.devices.light import LightState
 from automation.ha.adapters.light import HALight
-from automation.ha.connection import HAConnectionManager
 from automation.ha.models import EntityState, StateChanged
+from automation.ha.protocols import HAServiceCaller
 
 
 UPDATED = datetime(2026, 10, 27, 12, tzinfo=UTC)
@@ -33,7 +33,7 @@ def entity_data():
 
 @pytest.fixture
 def light():
-    return HALight(MagicMock(spec=HAConnectionManager), entity_id="light.lounge")
+    return HALight(MagicMock(spec_set=HAServiceCaller), entity_id="light.lounge")
 
 
 def test_translates_reported_attributes_and_preserves_source_timestamp(
@@ -124,16 +124,3 @@ def test_removed_entity_is_reported_as_unavailable(light, entity_data):
     assert light.parse_change(change) == LightState(
         power="unavailable", updated_at=UPDATED
     )
-
-
-@pytest.mark.parametrize(
-    "field, value",
-    [
-        ("power", "maybe"),
-        ("updated_at", datetime(2026, 10, 27)),
-        ("brightness_pct", 101),
-    ],
-)
-def test_domain_state_rejects_invalid_values(field, value):
-    with pytest.raises(ValidationError):
-        LightState.model_validate({"power": "on", "updated_at": UPDATED, field: value})
