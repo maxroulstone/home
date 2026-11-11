@@ -30,10 +30,33 @@ without module-name collisions.
 
 ## Integration tests
 
-Integration tests remain separately runnable and require the local HA simulation:
+Integration tests require the local HA simulation and are grouped by behaviour:
 
-```bash
-uv run pytest tests/integration -q
+```text
+integration/
+├── conftest.py       # Local HA clients, shared manager and restart support
+├── client/           # Authentication, states, service calls and subscriptions
+├── connection/       # Connection manager, disconnection and recovery
+├── lights/           # Light commands, reported state and routed observations
+└── sensors/          # Motion, illuminance and availability
 ```
 
-See [simulation setup and commands](simulation/README.md).
+Each folder keeps its own setup fixtures in `conftest.py`. Shared connection
+fixtures remain at the integration-test root. Helpers and virtual devices are
+reset by their fixtures.
+
+```bash
+docker --context desktop-linux compose -f tests/simulation/compose.yaml up -d
+uv run pytest tests/integration -q
+uv run pytest tests/integration/client -q
+uv run pytest tests/integration/connection -q
+uv run pytest tests/integration/lights -q
+uv run pytest tests/integration/sensors -q
+```
+
+The simulation UI is at [localhost:18123](http://localhost:18123). Tests use its
+local account token from the Git-ignored `.local/simulation/ha-token` file at the
+repository root. Complete local HA onboarding and create that token on first use.
+
+Disconnection and recovery tests restart only the local simulation HA container.
+Run integration tests sequentially because they share its virtual devices.

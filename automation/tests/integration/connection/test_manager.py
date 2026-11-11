@@ -5,7 +5,6 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
 import pytest
-import pytest_asyncio
 
 from automation.ha.client import HAClientError
 from automation.ha.connection import HAConnectionManager
@@ -15,18 +14,6 @@ from automation.ha.models import EntityState, ServiceCall, StateChanged
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 PROBE = "input_boolean.simulation_probe"
 TURN_ON = ServiceCall(domain="input_boolean", service="turn_on", entity_ids=(PROBE,))
-
-
-@pytest_asyncio.fixture
-async def connected_manager(
-    manager: HAConnectionManager, snapshots: asyncio.Queue[list[EntityState]]
-) -> HAConnectionManager:
-    async with asyncio.timeout(20):
-        await snapshots.get()
-    await manager.call_service(
-        ServiceCall(domain="input_boolean", service="turn_off", entity_ids=(PROBE,))
-    )
-    return manager
 
 
 async def wait_for_probe(

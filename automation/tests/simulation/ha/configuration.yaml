@@ -18,6 +18,25 @@ input_boolean:
   simulation_probe:
     name: Simulation probe
     initial: false
+  simulation_lounge_motion:
+    name: Lounge motion signal
+    icon: mdi:motion-sensor
+    initial: false
+  simulation_lounge_sensor_available:
+    name: Lounge sensor available
+    icon: mdi:access-point
+    initial: true
+
+input_number:
+  simulation_lounge_illuminance:
+    name: Lounge illuminance input
+    icon: mdi:brightness-5
+    unit_of_measurement: lx
+    min: 0
+    max: 2000
+    step: 1
+    initial: 500
+    mode: slider
 
 # HA handles commands and stores the virtual light's state in optimistic mode.
 # Empty action lists deliberately avoid calling any physical integration.
@@ -31,6 +50,25 @@ template:
         set_level: []
         set_temperature: []
         set_rgb: []
+
+  # Helpers accept real HA service calls; templates report the resulting state.
+  # Resetting the motion signal is not a claim that the room is unoccupied.
+  - binary_sensor:
+      - name: Lounge motion occupancy
+        default_entity_id: binary_sensor.lounge_motion_occupancy
+        unique_id: simulation_lounge_motion_occupancy
+        device_class: occupancy
+        availability: "{{ is_state('input_boolean.simulation_lounge_sensor_available', 'on') }}"
+        state: "{{ is_state('input_boolean.simulation_lounge_motion', 'on') }}"
+    sensor:
+      - name: Lounge motion illuminance
+        default_entity_id: sensor.lounge_motion_illuminance
+        unique_id: simulation_lounge_motion_illuminance
+        device_class: illuminance
+        state_class: measurement
+        unit_of_measurement: lx
+        availability: "{{ is_state('input_boolean.simulation_lounge_sensor_available', 'on') }}"
+        state: "{{ states('input_number.simulation_lounge_illuminance') | float(0) }}"
 
 lovelace:
   mode: yaml

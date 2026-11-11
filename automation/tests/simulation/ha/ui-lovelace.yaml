@@ -6,3 +6,27 @@ views:
       - type: light
         entity: light.lounge
         name: Simulated lounge light
+      - type: entities
+        title: Simulated lounge sensor
+        show_header_toggle: false
+        entities:
+          - entity: input_boolean.simulation_lounge_motion
+            name: Motion signal
+          - entity: input_number.simulation_lounge_illuminance
+            name: Lux input
+          - entity: input_boolean.simulation_lounge_sensor_available
+            name: Sensor available
+      - type: entities
+        title: Reported sensor states
+        show_header_toggle: false
+        entities:
+          - entity: binary_sensor.lounge_motion_occupancy
+            name: Motion
+          - entity: sensor.lounge_motion_illuminance
+            name: Illuminance
+      - type: markdown
+        content: >-
+          Switch motion on to report movement; switch it off before reporting again.
+          Off resets the signal and does not establish that the room is empty.
+          Lux can be adjusted independently. Python occupancy and lighting rules
+          are not connected yet.

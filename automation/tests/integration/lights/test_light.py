@@ -1,42 +1,17 @@
 """Each light control is checked against HA's actual reported virtual state."""
 
 import asyncio
-from collections.abc import AsyncIterator
 
 import pytest
-import pytest_asyncio
 
 from automation.devices.light import LightState
 from automation.ha.adapters.light import HALight
 from automation.ha.client import HAClient
-from automation.ha.connection import HAConnectionManager
-from automation.ha.models import EntityState, StateChanged
+from automation.ha.models import StateChanged
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 ENTITY_ID = "light.lounge"
-
-
-@pytest_asyncio.fixture
-async def light(
-    manager: HAConnectionManager,
-    snapshots: asyncio.Queue[list[EntityState]],
-) -> AsyncIterator[HALight]:
-    async with asyncio.timeout(20):
-        states = await snapshots.get()
-    if not any(state.entity_id == ENTITY_ID for state in states):
-        pytest.fail(
-            "Virtual light missing; restart the simulation with its updated config"
-        )
-
-    device = HALight(manager, entity_id=ENTITY_ID)
-    # Start each test off with known brightness and colour, independent of order.
-    await device.turn_on(brightness_pct=100, color_temp_kelvin=4000)
-    await device.turn_off()
-    try:
-        yield device
-    finally:
-        await device.turn_off()
 
 
 async def reported_state(client: HAClient, light: HALight) -> LightState:
