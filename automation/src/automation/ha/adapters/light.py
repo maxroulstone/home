@@ -13,8 +13,8 @@ from automation.devices.light import (
 )
 
 from ..client import HAClientError
-from ..connection import HAConnectionManager
 from ..models import EntityState, HAModel, JSONValue, ServiceCall, StateChanged
+from ..protocols import HAServiceCaller
 
 
 class _LightAttributes(HAModel):
@@ -29,8 +29,8 @@ class _LightAttributes(HAModel):
 class HALight(Light):
     """One HA light entity or light-group entity, using the shared connection."""
 
-    def __init__(self, manager: HAConnectionManager, *, entity_id: str) -> None:
-        self._manager = manager
+    def __init__(self, service_caller: HAServiceCaller, *, entity_id: str) -> None:
+        self._service_caller = service_caller
         self._entity_id = entity_id
 
     @property
@@ -69,12 +69,18 @@ class HALight(Light):
             )
         )
 
-    def parse_state(self, state: EntityState) -> LightState:
+    def parse_state(
+        self,
+        state: EntityState,
+        *,
+        previous_state: LightState | None = None,
+    ) -> LightState:
         """Translate a snapshot entity or event.new_state; do not cache observations.
 
         Startup/event routing supplies observations for this entity. Repeated
         snapshots preserve the original timestamp, allowing consumers to reconcile
         overlapping or older events. Commands never modify reported observations.
+        Previous state is accepted for the shared parser contract but is not needed.
         """
         if state.entity_id != self._entity_id:
             raise ValueError("Observation belongs to a different light")
@@ -99,8 +105,16 @@ class HALight(Light):
             }
         )
 
-    def parse_change(self, change: StateChanged) -> LightState:
-        """Translate an event, including removal of the light entity."""
+    def parse_change(
+        self,
+        change: StateChanged,
+        *,
+        previous_state: LightState | None = None,
+    ) -> LightState:
+        """Translate an event, including removal of the light entity.
+
+        Previous state is accepted for the shared parser contract but is not needed.
+        """
         if change.entity_id != self._entity_id:
             raise ValueError("Observation belongs to a different light")
         if change.new_state is None:
@@ -109,7 +123,7 @@ class HALight(Light):
 
     async def _send(self, call: ServiceCall) -> None:
         try:
-            await self._manager.call_service(call)
+            await self._service_caller.call_service(call)
         except HAClientError:
             # Rules handle device-level errors without importing HA exceptions.
             raise LightCommandError("Light command could not be confirmed") from None

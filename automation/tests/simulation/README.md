@@ -147,3 +147,76 @@ recipient without manual parsing:
 ```bash
 uv run pytest tests/integration/test_ha_light_router.py -q
 ```
+
+## Motion and illuminance adapters
+
+The production backup exposes two entities for the Candeo lounge sensor:
+`binary_sensor.lounge_motion_occupancy` and `sensor.lounge_motion_illuminance`.
+`HAMotionSensor` and `HAIlluminanceSensor` in `ha/adapters/` translate these
+independently into `MotionState` and `IlluminanceState`. They have no commands,
+connection dependency, or hidden mutable history. Both expose `entity_id`,
+`parse_state`, and `parse_change`; pass `previous_state` to preserve known history
+across snapshots, unavailable states, or removals.
+
+An initial on snapshot seeds movement from HA's `last_changed`, not the time the
+snapshot was fetched. Subsequent snapshots preserve supplied movement history.
+Motion events advance it for a new on report, including a forced repeated on.
+Attribute-only changes and recovery from unavailable aren't new movement.
+
+Illuminance accepts numeric HA state strings in lux, including zero. If a unit is
+reported it must be `lx`. It preserves an old reading's sample time on attribute
+updates, availability changes and unchanged snapshots. A forced report can give
+an unchanged lux value a new report time. `measured_at` uses HA's `last_changed` as
+evidence of sample report time; this is not a device-supplied measurement clock.
+
+The Node-RED backup consumes raw `zigbee2mqtt/lounge_motion` messages. Our current
+HA `state_changed` subscription is not yet proven to preserve every such report.
+HA MQTT entities can suppress unchanged values unless configured to forward them
+(for example with [force_update](https://www.home-assistant.io/integrations/binary_sensor.mqtt/#force_update)).
+The backup cannot establish the active retained discovery configuration or runtime
+behaviour. No production discovery settings have been changed.
+
+These adapters are unit-tested with controlled timestamps. `HAMotionRouter`
+and `HAIlluminanceRouter` now register and deliver their domain states separately:
+
+```python
+motion_router.register(motion_sensor, on_state_received=handle_motion_state)
+illuminance_router.register(
+    illuminance_sensor, on_state_received=handle_illuminance_state
+)
+```
+
+All three typed routers inherit from `HAStateRouter` in `ha/routing/state.py`.
+The base class provides snapshot delivery, source-timestamp filtering, and committing
+history after successful delivery. Each router instance owns its registrations and
+history. Each subclass exposes a device-specific `register()` method, which calls
+the base class's `_register()` helper with its adapter's translation functions and
+missing-entity history policy: light history is cleared; motion and illuminance
+history is retained. The snapshot and change handlers are inherited unchanged.
+Stale events are ignored before translation for all three routers, including lights.
+
+Both sensor routers provide `handle_state_snapshot` and `handle_state_change`,
+matching the light router. Application-level callbacks can forward each HA snapshot/change to the
+routers. They pass explicit previous state into the adapters, ignore unrelated
+entities and stale/duplicate updates, and await recipients sequentially. Handler
+errors propagate. Snapshots are delivered on every connection, even unchanged.
+
+A missing snapshot entity delivers `None` and resets the session's comparison
+baseline, while retaining known movement/sample history for reappearance. A
+removal event delivers an unavailable model and keeps that history. Each entity
+has one recipient; registration happens before processing observations.
+
+Router tests use HA-shaped Pydantic models only. No MQTT client, broker or device
+connection is added to the development stack. HA-only sensor integration scenarios,
+coordinating readings before rule evaluation, and application startup wiring are
+still separate steps. No physical sensor is connected here.
+
+```bash
+uv run pytest tests/unit/test_ha_motion.py tests/unit/test_ha_illuminance.py -q
+```
+
+Run the focused sensor router tests:
+
+```bash
+uv run pytest tests/unit/test_ha_motion_router.py tests/unit/test_ha_illuminance_router.py -q
+```

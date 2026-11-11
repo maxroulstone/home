@@ -7,8 +7,8 @@ import pytest
 
 from automation.devices.light import LightState
 from automation.ha.adapters.light import HALight
-from automation.ha.connection import HAConnectionManager
 from automation.ha.models import EntityState, StateChanged
+from automation.ha.protocols import HAServiceCaller
 from automation.ha.routing.lights import HALightRouter
 
 
@@ -39,7 +39,7 @@ def change(power="on", seconds=0, entity_id="light.lounge"):
 
 @pytest.fixture
 def registered_light():
-    light = HALight(MagicMock(spec=HAConnectionManager), entity_id="light.lounge")
+    light = HALight(MagicMock(spec_set=HAServiceCaller), entity_id="light.lounge")
     handler = AsyncMock()
     router = HALightRouter()
     router.register(light, on_state_received=handler)
@@ -72,7 +72,7 @@ async def test_unregistered_entity_change_is_ignored(registered_light):
 async def test_each_registered_light_has_its_own_handler(registered_light):
     router, lounge_handler = registered_light
     hallway_handler = AsyncMock()
-    hallway = HALight(MagicMock(spec=HAConnectionManager), entity_id="light.hallway")
+    hallway = HALight(MagicMock(spec_set=HAServiceCaller), entity_id="light.hallway")
     router.register(hallway, on_state_received=hallway_handler)
     await router.handle_state_change(change(entity_id="light.hallway"))
 
@@ -142,7 +142,7 @@ async def test_removed_entity_delivers_unavailable_state(registered_light):
 
 async def test_duplicate_registration_is_rejected(registered_light):
     router, _ = registered_light
-    duplicate = HALight(MagicMock(spec=HAConnectionManager), entity_id="light.lounge")
+    duplicate = HALight(MagicMock(spec_set=HAServiceCaller), entity_id="light.lounge")
 
     with pytest.raises(ValueError, match="already registered"):
         router.register(duplicate, on_state_received=AsyncMock())
@@ -159,3 +159,12 @@ async def test_failed_delivery_propagates_without_advancing_latest_state(
     handler.side_effect = None
     await router.handle_state_change(change())
     assert handler.await_count == 2
+
+
+async def test_invalid_stale_event_is_ignored_before_translation(registered_light):
+    router, handler = registered_light
+    await router.handle_state_snapshot([entity()])
+    handler.reset_mock()
+    await router.handle_state_change(change(power="invalid", seconds=-1))
+
+    handler.assert_not_awaited()
